@@ -15,6 +15,9 @@ BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
+    
+    print("POST /mcp received")
+    ...
     """
     Принимает POST-запросы от Xiaozhi, извлекает сообщение,
     отправляет его в BotMan через MCP-коннектор и возвращает ответ.
