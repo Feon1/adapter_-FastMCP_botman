@@ -3,55 +3,66 @@ import requests
 import os
 import uvicorn
 import json
+import logging
 
-print("SERVER STARTED: app is loading")
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# URL коннектора BotMan (скопируйте из настроек интеграции)
 BOTMAN_MCP_URL = os.getenv("BOTMAN_MCP_URL", "https://gate.prod.alb.botman.pro/mcp")
-# Токен авторизации (если требуется)
 BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
-    
-    print("POST /mcp received")
-    ...
-    """
-    Принимает POST-запросы от Xiaozhi, извлекает сообщение,
-    отправляет его в BotMan через MCP-коннектор и возвращает ответ.
-    """
     try:
-        # Читаем тело запроса
+        # 1. Читаем запрос от Xiaozhi
         body = await request.json()
         query = body.get("message", "")
-        if not query:
-            return {"error": "Missing 'message' field"}
+        logger.info(f"Received message: {query}")
 
-        # Готовим заголовки для BotMan
+        # 2. Готовим запрос к BotMan
         headers = {"Content-Type": "application/json"}
         if BOTMAN_TOKEN:
             headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
-
-        # Отправляем запрос в BotMan
         payload = {"message": query}
+        logger.info(f"Sending to BotMan: {payload}")
+
+        # 3. Отправляем запрос
         resp = requests.post(
             BOTMAN_MCP_URL,
             json=payload,
             headers=headers,
             timeout=30
         )
-        resp.raise_for_status()
+        
+        logger.info(f"BotMan response status: {resp.status_code}")
+        logger.info(f"BotMan response headers: {resp.headers}")
+        logger.info(f"BotMan response body (first 500 chars): {resp.text[:500]}")
 
-        # Возвращаем ответ от BotMan
-        return resp.json()
+        # 4. Проверяем статус
+        if resp.status_code != 200:
+            return {
+                "error": f"BotMan returned {resp.status_code}",
+                "details": resp.text[:500]
+            }
+
+        # 5. Пытаемся разобрать ответ как JSON, если не получается — возвращаем как текст
+        try:
+            return resp.json()
+        except json.JSONDecodeError:
+            # Если ответ не JSON, возвращаем как текст
+            return {"response": resp.text}
 
     except requests.exceptions.Timeout:
+        logger.error("Timeout while connecting to BotMan")
         return {"error": "Timeout while connecting to BotMan"}
     except requests.exceptions.RequestException as e:
+        logger.error(f"BotMan request failed: {str(e)}")
         return {"error": f"BotMan request failed: {str(e)}"}
     except Exception as e:
+        logger.error(f"Internal error: {str(e)}")
         return {"error": f"Internal error: {str(e)}"}
 
 @app.get("/")
