@@ -1,27 +1,40 @@
-from fastmcp import FastMCP
+from fastapi import FastAPI, Request
 import requests
-import json
+import uvicorn
+import os
 
-mcp = FastMCP("Xiaozhi-BotMan")
+app = FastAPI()
 
-# URL вашего MCP-коннектора BotMan (полученный от поддержки)
-BOTMAN_MCP_URL = "https://gate.prod.alb.botman.pro/mcp"
+BOTMAN_MCP_URL = os.getenv("BOTMAN_MCP_URL", "https://gate.prod.alb.botman.pro/mcp")
+BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
-@mcp.tool()
-def ask_botman(query: str) -> str:
-    """Отправляет запрос в BotMan и возвращает ответ"""
+@app.post("/mcp")
+async def mcp_handler(request: Request):
+    """Принимает запросы от Xiaozhi и перенаправляет в BotMan"""
     try:
-        # Если требуется токен, добавьте его в заголовки
-        headers = {
-            "Content-Type": "application/json",
-            # "Authorization": "Bearer ВАШ_ТОКЕН"  # если нужен
-        }
-        payload = {"message": query}
-        response = requests.post(BOTMAN_MCP_URL, json=payload, headers=headers, timeout=30)
+        data = await request.json()
+        query = data.get("message", "")
+        
+        headers = {"Content-Type": "application/json"}
+        if BOTMAN_TOKEN:
+            headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
+        
+        # Отправляем запрос в BotMan
+        response = requests.post(
+            BOTMAN_MCP_URL,
+            json={"message": query},
+            headers=headers,
+            timeout=30
+        )
         response.raise_for_status()
-        return response.text
+        return response.json()
+    
     except Exception as e:
-        return f"Ошибка при обращении к BotMan: {str(e)}"
+        return {"error": str(e)}
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "Xiaozhi-BotMan adapter"}
 
 if __name__ == "__main__":
-    mcp.run(host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
