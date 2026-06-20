@@ -4,8 +4,8 @@ import os
 import uvicorn
 import json
 import logging
+import time
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -17,43 +17,68 @@ BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 @app.post("/mcp")
 async def mcp_handler(request: Request):
     try:
-        # 1. Читаем запрос от Xiaozhi
         body = await request.json()
         query = body.get("message", "")
         logger.info(f"Received message: {query}")
 
-        # 2. Готовим запрос к BotMan
         headers = {"Content-Type": "application/json"}
         if BOTMAN_TOKEN:
             headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
         payload = {"message": query}
-        logger.info(f"Sending to BotMan: {payload}")
 
-        # 3. Отправляем запрос
+        # 1. Отправляем запрос в BotMan
         resp = requests.post(
             BOTMAN_MCP_URL,
             json=payload,
             headers=headers,
             timeout=30
         )
-        
         logger.info(f"BotMan response status: {resp.status_code}")
-        logger.info(f"BotMan response headers: {resp.headers}")
-        logger.info(f"BotMan response body (first 500 chars): {resp.text[:500]}")
 
-        # 4. Проверяем статус
-        if resp.status_code != 200:
+        # 2. Если 202 Accepted — ждём завершения
+        if resp.status_code == 202:
+            # Проверяем, есть ли заголовок Location с URL для опроса
+            location_url = resp.headers.get("Location")
+            if location_url:
+                logger.info(f"Polling {location_url}")
+                # Опрашиваем до получения результата (максимум 30 секунд)
+                for _ in range(30):
+                    time.sleep(1)
+                    poll_resp = requests.get(
+                        location_url,
+                        headers=headers,
+                        timeout=10
+                    )
+                    if poll_resp.status_code == 200:
+                        try:
+                            return poll_resp.json()
+                        except json.JSONDecodeError:
+                            return {"response": poll_resp.text}
+                    elif poll_resp.status_code == 202:
+                        continue  # ещё не готово
+                    else:
+                        return {
+                            "error": f"Polling failed: {poll_resp.status_code}",
+                            "details": poll_resp.text[:500]
+                        }
+                return {"error": "Timeout while waiting for BotMan response"}
+            else:
+                # Если Location нет, просто возвращаем статус
+                return {"status": "accepted", "message": "Request accepted, but no polling URL provided"}
+
+        # 3. Если ответ 200 — сразу возвращаем результат
+        elif resp.status_code == 200:
+            try:
+                return resp.json()
+            except json.JSONDecodeError:
+                return {"response": resp.text}
+
+        # 4. Любой другой статус — ошибка
+        else:
             return {
                 "error": f"BotMan returned {resp.status_code}",
                 "details": resp.text[:500]
             }
-
-        # 5. Пытаемся разобрать ответ как JSON, если не получается — возвращаем как текст
-        try:
-            return resp.json()
-        except json.JSONDecodeError:
-            # Если ответ не JSON, возвращаем как текст
-            return {"response": resp.text}
 
     except requests.exceptions.Timeout:
         logger.error("Timeout while connecting to BotMan")
