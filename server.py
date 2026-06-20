@@ -4,6 +4,8 @@ import os
 import uvicorn
 import json
 
+print("SERVER STARTED: app is loading")
+
 app = FastAPI()
 
 # URL коннектора BotMan (скопируйте из настроек интеграции)
