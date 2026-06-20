@@ -10,16 +10,12 @@ BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
-    """Принимает запросы от Xiaozhi и перенаправляет в BotMan"""
     try:
         data = await request.json()
         query = data.get("message", "")
-        
         headers = {"Content-Type": "application/json"}
         if BOTMAN_TOKEN:
             headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
-        
-        # Отправляем запрос в BotMan
         response = requests.post(
             BOTMAN_MCP_URL,
             json={"message": query},
@@ -28,7 +24,6 @@ async def mcp_handler(request: Request):
         )
         response.raise_for_status()
         return response.json()
-    
     except Exception as e:
         return {"error": str(e)}
 
