@@ -1,35 +1,29 @@
+from fastapi import FastAPI, Request, Response
+import requests
+import os
+import uvicorn
+import json
+
+app = FastAPI()
+
+# ... ваш код с BOTMAN_MCP_URL и BOTMAN_TOKEN ...
+
 @app.post("/mcp")
 async def mcp_handler(request: Request):
-    try:
-        body = await request.json()
-        query = body.get("message", "")
+    # ... обработка POST ...
 
-        headers = {"Content-Type": "application/json"}
-        if BOTMAN_TOKEN:
-            headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
-        payload = {"message": query}
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "Xiaozhi-BotMan adapter"}
 
-        resp = requests.post(
-            BOTMAN_MCP_URL,
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
+@app.head("/")
+async def head_root():
+    return Response(status_code=200, headers={"Content-Type": "application/json"})
 
-        # Главное изменение: читаем тело ответа всегда, даже при 202
-        try:
-            response_data = resp.json()
-        except json.JSONDecodeError:
-            response_data = {"response": resp.text}
+@app.get("/health")
+async def health():
+    return {"status": "alive"}
 
-        # Если статус 2xx — возвращаем данные
-        if 200 <= resp.status_code < 300:
-            return response_data
-        else:
-            return {
-                "error": f"BotMan returned {resp.status_code}",
-                "details": response_data
-            }
-
-    except Exception as e:
-        return {"error": str(e)}
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
