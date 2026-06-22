@@ -3,25 +3,83 @@ import requests
 import os
 import uvicorn
 import json
+import logging
+
+# Настройка логирования (для отладки на Render)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# ... ваш код с BOTMAN_MCP_URL и BOTMAN_TOKEN ...
+# Читаем переменные окружения
+BOTMAN_MCP_URL = os.getenv("BOTMAN_MCP_URL", "https://gate.prod.alb.botman.pro/mcp")
+BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
-    # ... обработка POST ...
+    """Принимает POST-запросы от Xiaozhi, отправляет в BotMan и возвращает ответ."""
+    try:
+        # 1. Читаем запрос от клиента
+        body = await request.json()
+        query = body.get("message", "")
+        if not query:
+            return {"error": "Missing 'message' field"}
 
-@app.get("/")
+        logger.info(f"Received message: {query}")
+
+        # 2. Готовим запрос к BotMan
+        headers = {"Content-Type": "application/json"}
+        if BOTMAN_TOKEN:
+            headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
+        payload = {"message": query}
+
+        logger.info(f"Sending to BotMan: {payload}")
+
+        # 3. Отправляем запрос
+        resp = requests.post(
+            BOTMAN_MCP_URL,
+            json=payload,
+            headers=headers,
+            timeout=30
+        )
+
+        # 4. Логируем ответ от BotMan
+        logger.info(f"BotMan status: {resp.status_code}")
+        logger.info(f"BotMan body (first 500 chars): {resp.text[:500]}")
+
+        # 5. Пытаемся прочитать тело ответа (даже при 202)
+        try:
+            response_data = resp.json()
+        except json.JSONDecodeError:
+            response_data = {"response": resp.text}
+
+        # 6. Если статус 2xx — возвращаем данные, иначе — ошибку
+        if 200 <= resp.status_code < 300:
+            return response_data
+        else:
+            return {
+                "error": f"BotMan returned {resp.status_code}",
+                "details": response_data
+            }
+
+    except requests.exceptions.Timeout:
+        logger.error("Timeout while connecting to BotMan")
+        return {"error": "Timeout while connecting to BotMan"}
+    except requests.exceptions.RequestException as e:
+        logger.error(f"BotMan request failed: {str(e)}")
+        return {"error": f"BotMan request failed: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Internal error: {str(e)}")
+        return {"error": f"Internal error: {str(e)}"}
+
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
+    """Корневой маршрут для проверки работоспособности."""
     return {"status": "ok", "service": "Xiaozhi-BotMan adapter"}
-
-@app.head("/")
-async def head_root():
-    return Response(status_code=200, headers={"Content-Type": "application/json"})
 
 @app.get("/health")
 async def health():
+    """Маршрут для проверки здоровья (можно использовать для мониторинга)."""
     return {"status": "alive"}
 
 if __name__ == "__main__":
