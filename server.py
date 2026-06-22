@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Читаем переменные окружения
 BOTMAN_MCP_URL = os.getenv("BOTMAN_MCP_URL", "https://gate.prod.alb.botman.pro/mcp")
 BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
@@ -24,9 +23,7 @@ async def mcp_handler(request: Request):
 
         logger.info(f"Received message: {query}")
 
-        # Готовим запрос к BotMan
         headers = {"Content-Type": "application/json"}
-        # Если токен есть, передаём в заголовке
         if BOTMAN_TOKEN:
             headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
             logger.info(f"Using token: {BOTMAN_TOKEN[:10]}...")
@@ -35,7 +32,7 @@ async def mcp_handler(request: Request):
 
         payload = {"message": query}
 
-        # Отправляем запрос (с таймаутом)
+        # Отправляем запрос с таймаутом
         resp = requests.post(
             BOTMAN_MCP_URL,
             json=payload,
@@ -43,17 +40,17 @@ async def mcp_handler(request: Request):
             timeout=30
         )
 
-        # Логируем ответ
+        # Логируем ВСЁ
         logger.info(f"BotMan status: {resp.status_code}")
-        logger.info(f"BotMan body: {resp.text[:500]}")
+        logger.info(f"BotMan headers: {dict(resp.headers)}")
+        logger.info(f"BotMan body (full): {resp.text}")
 
-        # Пытаемся прочитать тело ответа
+        # Пытаемся прочитать тело
         try:
             response_data = resp.json()
         except json.JSONDecodeError:
             response_data = {"response": resp.text}
 
-        # Если статус 2xx — возвращаем данные
         if 200 <= resp.status_code < 300:
             return response_data
         else:
@@ -62,15 +59,9 @@ async def mcp_handler(request: Request):
                 "details": response_data
             }
 
-    except requests.exceptions.Timeout:
-        logger.error("Timeout while connecting to BotMan")
-        return {"error": "Timeout while connecting to BotMan"}
-    except requests.exceptions.RequestException as e:
-        logger.error(f"BotMan request failed: {str(e)}")
-        return {"error": f"BotMan request failed: {str(e)}"}
     except Exception as e:
-        logger.error(f"Internal error: {str(e)}")
-        return {"error": f"Internal error: {str(e)}"}
+        logger.error(f"Exception: {str(e)}", exc_info=True)
+        return {"error": str(e)}
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root():
