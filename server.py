@@ -11,45 +11,46 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# URL для чата с конкретным агентом (из браузера)
 BOTMAN_CHAT_URL = os.getenv(
     "BOTMAN_CHAT_URL",
     "https://gate.prod.alb.botman.pro/api/v1/ai-agents/6a1fdbb2529bc3da7be9bbd3/chat/test"
 )
 BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
-# Хранилище conversationId (можно сохранять на диск или в Redis, но для простоты пока в памяти)
+# Хранилище conversationId для пользователей
 conversation_store = {}
 
-def get_conversation_id(user_id: str) -> str:
-    """Возвращает conversationId для пользователя (создаёт новый UUID, если нет)."""
-    if user_id not in conversation_store:
-        # Генерируем новый ID в формате 24-символьного hex (как ObjectId)
-        conversation_store[user_id] = uuid.uuid4().hex[:24]
-    return conversation_store[user_id]
+def get_conversation_id(user_id: str):
+    """Возвращает conversationId или None, если его ещё нет."""
+    return conversation_store.get(user_id)
+
+def set_conversation_id(user_id: str, conv_id: str):
+    """Сохраняет conversationId для пользователя."""
+    conversation_store[user_id] = conv_id
+    logger.info(f"Saved conversationId for {user_id}: {conv_id}")
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
     try:
-        # 1. Читаем запрос от клиента
         body = await request.json()
         query = body.get("message", "")
         if not query:
             return {"error": "Missing 'message' field"}
 
         user_id = body.get("user_id", "default_user")
-        conversation_id = get_conversation_id(user_id)
+        conv_id = get_conversation_id(user_id)
 
         logger.info(f"Received message: {query} for user {user_id}")
-        logger.info(f"Using conversationId: {conversation_id}")
 
-        # 2. Формируем тело запроса (как в браузере)
-        payload = {
-            "message": query,
-            "conversationId": conversation_id
-        }
+        # Формируем тело запроса
+        payload = {"message": query}
+        if conv_id:
+            payload["conversationId"] = conv_id
+            logger.info(f"Using existing conversationId: {conv_id}")
+        else:
+            logger.info("No conversationId yet, starting new conversation")
 
-        # 3. Формируем заголовки (копируем из работающего запроса PowerShell)
+        # Заголовки (как в браузере)
         headers = {
             "accept": "application/json, text/plain, */*",
             "accept-encoding": "gzip, deflate, br, zstd",
@@ -70,9 +71,7 @@ async def mcp_handler(request: Request):
 
         logger.info(f"Sending to BotMan: URL={BOTMAN_CHAT_URL}")
         logger.info(f"Payload: {payload}")
-        logger.info(f"Headers: {headers}")
 
-        # 4. Отправляем запрос
         resp = requests.post(
             BOTMAN_CHAT_URL,
             json=payload,
@@ -81,20 +80,19 @@ async def mcp_handler(request: Request):
         )
 
         logger.info(f"BotMan status: {resp.status_code}")
-        logger.info(f"BotMan body (full): {resp.text}")
+        logger.info(f"BotMan body: {resp.text}")
 
-        # 5. Пытаемся прочитать ответ
+        # Обработка ответа
         try:
             response_data = resp.json()
         except json.JSONDecodeError:
             response_data = {"response": resp.text}
 
-        # Если в ответе есть новый conversationId, обновляем его
+        # Если в ответе есть conversationId и у нас его ещё нет – сохраняем
         if isinstance(response_data, dict):
-            new_conversation_id = response_data.get("conversationId")
-            if new_conversation_id:
-                conversation_store[user_id] = new_conversation_id
-                logger.info(f"Updated conversationId for {user_id}: {new_conversation_id}")
+            new_conv_id = response_data.get("conversationId")
+            if new_conv_id and not conv_id:
+                set_conversation_id(user_id, new_conv_id)
 
         if 200 <= resp.status_code < 300:
             return response_data
