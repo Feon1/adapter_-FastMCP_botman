@@ -5,7 +5,6 @@ import uvicorn
 import json
 import logging
 
-# Настройка логирования (для отладки на Render)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -17,9 +16,7 @@ BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
-    """Принимает POST-запросы от Xiaozhi, отправляет в BotMan и возвращает ответ."""
     try:
-        # 1. Читаем запрос от клиента
         body = await request.json()
         query = body.get("message", "")
         if not query:
@@ -27,15 +24,18 @@ async def mcp_handler(request: Request):
 
         logger.info(f"Received message: {query}")
 
-        # 2. Готовим запрос к BotMan
+        # Готовим запрос к BotMan
         headers = {"Content-Type": "application/json"}
+        # Если токен есть, передаём в заголовке
         if BOTMAN_TOKEN:
             headers["Authorization"] = f"Bearer {BOTMAN_TOKEN}"
+            logger.info(f"Using token: {BOTMAN_TOKEN[:10]}...")
+        else:
+            logger.warning("BOTMAN_TOKEN is not set!")
+
         payload = {"message": query}
 
-        logger.info(f"Sending to BotMan: {payload}")
-
-        # 3. Отправляем запрос
+        # Отправляем запрос (с таймаутом)
         resp = requests.post(
             BOTMAN_MCP_URL,
             json=payload,
@@ -43,17 +43,17 @@ async def mcp_handler(request: Request):
             timeout=30
         )
 
-        # 4. Логируем ответ от BotMan
+        # Логируем ответ
         logger.info(f"BotMan status: {resp.status_code}")
-        logger.info(f"BotMan body (first 500 chars): {resp.text[:500]}")
+        logger.info(f"BotMan body: {resp.text[:500]}")
 
-        # 5. Пытаемся прочитать тело ответа (даже при 202)
+        # Пытаемся прочитать тело ответа
         try:
             response_data = resp.json()
         except json.JSONDecodeError:
             response_data = {"response": resp.text}
 
-        # 6. Если статус 2xx — возвращаем данные, иначе — ошибку
+        # Если статус 2xx — возвращаем данные
         if 200 <= resp.status_code < 300:
             return response_data
         else:
@@ -74,12 +74,10 @@ async def mcp_handler(request: Request):
 
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root():
-    """Корневой маршрут для проверки работоспособности."""
     return {"status": "ok", "service": "Xiaozhi-BotMan adapter"}
 
 @app.get("/health")
 async def health():
-    """Маршрут для проверки здоровья (можно использовать для мониторинга)."""
     return {"status": "alive"}
 
 if __name__ == "__main__":
