@@ -4,14 +4,29 @@ import os
 import uvicorn
 import json
 import logging
+import uuid
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-BOTMAN_MCP_URL = os.getenv("BOTMAN_MCP_URL", "https://gate.prod.alb.botman.pro/mcp")
+# URL для чата с конкретным агентом
+BOTMAN_CHAT_URL = os.getenv(
+    "BOTMAN_CHAT_URL",
+    "https://gate.prod.alb.botman.pro/api/v1/ai-agents/6a1fdbb2529bc3da7be9bbd3/chat/test"
+)
 BOTMAN_TOKEN = os.getenv("BOTMAN_TOKEN", None)
+
+# Хранилище conversationId (можно сохранять на диск или в Redis, но для простоты пока в памяти)
+conversation_store = {}
+
+def get_conversation_id(user_id: str) -> str:
+    """Возвращает conversationId для пользователя (создаёт новый, если нет)."""
+    if user_id not in conversation_store:
+        # Генерируем новый ID (можно также получить из первого ответа BotMan)
+        conversation_store[user_id] = str(uuid.uuid4())
+    return conversation_store[user_id]
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
@@ -21,7 +36,11 @@ async def mcp_handler(request: Request):
         if not query:
             return {"error": "Missing 'message' field"}
 
-        logger.info(f"Received message: {query}")
+        # Определяем user_id (можно передавать в запросе или использовать фиксированный)
+        user_id = body.get("user_id", "default_user")
+        conversation_id = get_conversation_id(user_id)
+
+        logger.info(f"Received message: {query} for user {user_id}")
 
         headers = {"Content-Type": "application/json"}
         if BOTMAN_TOKEN:
@@ -30,26 +49,35 @@ async def mcp_handler(request: Request):
         else:
             logger.warning("BOTMAN_TOKEN is not set!")
 
-        payload = {"message": query}
+        # Формируем тело запроса в точном формате BotMan
+        payload = {
+            "message": query,
+            "conversationId": conversation_id
+        }
 
-        # Отправляем запрос с таймаутом
+        # Отправляем запрос
         resp = requests.post(
-            BOTMAN_MCP_URL,
+            BOTMAN_CHAT_URL,
             json=payload,
             headers=headers,
             timeout=30
         )
 
-        # Логируем ВСЁ
         logger.info(f"BotMan status: {resp.status_code}")
-        logger.info(f"BotMan headers: {dict(resp.headers)}")
         logger.info(f"BotMan body (full): {resp.text}")
 
-        # Пытаемся прочитать тело
+        # Пытаемся прочитать ответ
         try:
             response_data = resp.json()
         except json.JSONDecodeError:
             response_data = {"response": resp.text}
+
+        # Если в ответе есть новый conversationId, обновляем его
+        if isinstance(response_data, dict):
+            new_conversation_id = response_data.get("conversationId")
+            if new_conversation_id:
+                conversation_store[user_id] = new_conversation_id
+                logger.info(f"Updated conversationId for {user_id}: {new_conversation_id}")
 
         if 200 <= resp.status_code < 300:
             return response_data
